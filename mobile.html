@@ -164,11 +164,11 @@ footer{color:var(--dim);font-size:10px;text-transform:none;line-height:1.5;paddi
 </section>
 
 <section class="card" style="padding:0">
-  <div class="ph" style="margin:10px 12px 0"><span>▣ LIQUIDITY MESH</span><span>VERDE LONG · ROSSO SHORT · ARANCIO APERTA</span></div>
+  <div class="ph" style="margin:10px 12px 0"><span>▣ LIQUIDITY MESH</span><span>VERDE LONG · CIANO NESSUN SEGNALE · ARANCIO APERTA</span></div>
   <div id="globe"><div class="micro" style="left:10px;top:8px">NODE:ROMA-01<br>41.9028N 12.4964E</div><div class="micro" style="right:10px;bottom:8px;text-align:right" id="microR">MESH<br>ARCS 0</div></div>
 </section>
 
-<footer>Simulazione di paper trading su dati pubblici reali (Binance, DexScreener). Nessun wallet, nessuna chiave, nessun ordine reale. Non è consulenza finanziaria.<br>Conto simulato in EUR, prezzi di mercato in USD, cambio ignorato.<br>Strategia: momentum su tutto il mercato Binance USDT (≥ $1M vol.) + memecoin DexScreener (liq. ≥ $100K, età ≥ 24h, solo long) · rank ogni 12s su rendimenti 1m/3m/5m e volume · LONG e SHORT · size 20% · max 4 · SL −1,2% · TP +2,5% · trailing · time-stop 15m · fee 0,1%. Tocca un simbolo per vederne il grafico. Il trading simulato gira solo con la pagina aperta; apri una sola pagina alla volta.</footer>
+<footer>Simulazione di paper trading su dati pubblici reali (Binance, DexScreener). Nessun wallet, nessuna chiave, nessun ordine reale. Non è consulenza finanziaria.<br>Conto simulato in EUR, prezzi di mercato in USD, cambio ignorato.<br>Strategia v1.1 (onesta): momentum sulle coppie Binance USDT con volume ≥ $20M (niente token azionari, stablecoin, oro) · memecoin DexScreener solo in visione · rank ogni 12s su rendimenti 1m/3m/5m e volume · SOLO LONG (lo spot non permette short) · ingresso solo con spread ≤ 5 bp, fill a bid/ask + 0,03% · rischio ~1% per trade con stop basato sulla volatilità, target 2R · max 2 posizioni · stop giornaliero −3% · time-stop 15m · fee 0,1%. Attenzione: questa strategia non ha un vantaggio dimostrato dopo i costi. Tocca un simbolo per vederne il grafico. Il trading simulato gira solo con la pagina aperta; apri una sola pagina alla volta.</footer>
 
 <script type="module">
 import * as THREE from 'https://unpkg.com/three@0.160.0/build/three.module.js';
@@ -178,13 +178,20 @@ const CLOCK_UTC=n=>'ROMA · UTC '+n.toISOString().slice(11,16);
 // Pure logic, no DOM / no I/O. Inlined into the HTML pages by src/build.py and loaded by bot/bot.mjs.
 const REST_HOSTS=['https://data-api.binance.vision','https://api.binance.com'];
 const WS_HOSTS=['wss://data-stream.binance.vision','wss://stream.binance.com:9443'];
-const START=50, SIZE=0.20, MAX_OPEN=4, FEE=0.001;
-const SL=0.012, TP=0.025, TRAIL_ON=0.008, TRAIL=0.006, TIME_STOP=15*60e3, COOLDOWN=10*60e3, MAX_NEW_PER_CYCLE=2;
-const MIN_QV=1e6, RANK_MS=12e3, SAMPLE_MS=5e3, HIST_MS=35*60e3, DEX_MS=40e3, UNIVERSE_MS=10*60e3;
+const START=50, MAX_OPEN=2, FEE=0.001, SLIP=0.0003;               // honest v1.1: 0.1% fee/side + 0.03% slippage/side
+const RISK=0.01, MAX_POS_FRAC=0.45, MIN_NOTIONAL=5, SIZE=MAX_POS_FRAC; // risk ~1% equity to the stop; Binance min order 5 USDT
+const SL_MIN=0.008, SL_MAX=0.04, TP_R=2, MAX_SPREAD_BP=5, DAILY_STOP=0.03; // vol-based stop, TP = 2R, skip if spread > 5 bp, no new entries after -3% day
+const SL=0.012, TP=0.025, /* SL/TP = legacy fallbacks only */ TRAIL_ON=0.008, TRAIL=0.006, TIME_STOP=15*60e3, COOLDOWN=10*60e3, MAX_NEW_PER_CYCLE=2;
+const MIN_QV=20e6, RANK_MS=12e3, SAMPLE_MS=5e3, HIST_MS=35*60e3, DEX_MS=40e3, UNIVERSE_MS=10*60e3;
 const DEX_MIN_LIQ=100000, DEX_MIN_AGE_H=24;
 const TH={r1:0.08, r3:0.30, r5max:6, surge:0.7, score:0.25};
-const STABLES=new Set(['USDC','FDUSD','TUSD','DAI','BUSD','USDP','USDE','PYUSD','EUR','EURI','AEUR','USD1','BFUSD','RLUSD','XUSD','GBP','TRY','BRL','UST','USTC','USDS','USDD','FRAX','LUSD','GUSD','SUSD','WBTC','WBETH','BETH','BNSOL','ZUSD','IDRT','BIDR','UAH','NGN','RUB','ARS','ZAR','PLN','RON','JPY','MXN','COP','CZK']);
+const STABLES=new Set(['U','RWUSD','KGST','USDSB','PAX','VAI','PAXG','XAUT','STETH','WSTETH','CBETH','SOLVBTC','USDC','FDUSD','TUSD','DAI','BUSD','USDP','USDE','PYUSD','EUR','EURI','AEUR','USD1','BFUSD','RLUSD','XUSD','GBP','TRY','BRL','UST','USTC','USDS','USDD','FRAX','LUSD','GUSD','SUSD','WBTC','WBETH','BETH','BNSOL','ZUSD','IDRT','BIDR','UAH','NGN','RUB','ARS','ZAR','PLN','RON','JPY','MXN','COP','CZK']);
 const clamp=(v,a,b)=>Math.max(a,Math.min(b,v));
+// Binance tokenized stocks/ETFs use a 'B' suffix (NVDAB, IRENB, MSTRB, SOXLB...). Real crypto bases ending in B (checked vs exchangeInfo 19/11/2026):
+const CRYPTO_B=new Set(['ARB','BB','BNB','CKB','DGB','SHIB','TRB','YB']);
+const isStockToken=base=>base.length>=3&&base.endsWith('B')&&!CRYPTO_B.has(base);
+// Rome calendar day (for the daily loss stop)
+const romeDay=t=>new Intl.DateTimeFormat('sv-SE',{timeZone:'Europe/Rome'}).format(t);
 
 function idxAt(u,target){ let lo=0,hi=u.t.length-1,ans=-1; while(lo<=hi){ const m=(lo+hi)>>1; if(u.t[m]<=target){ ans=m; lo=m+1; } else hi=m-1; } return ans; }
 function record(u,price,q,now){ if(!(price>0)) return; u.price=price; if(q!=null) u.qNow=q; u.lastUpd=now;
@@ -195,7 +202,8 @@ function posValue(p,px){ return p.side==='LONG'? p.qty*px : Math.max(0,p.qty*(2*
 // universe filter for one Binance 24hr ticker row; bases = Set of all USDT base assets. Returns 'skip' | 'ineligible' | 'ok'
 function universeCheck(x,bases,now){
   if(!x.symbol.endsWith('USDT')) return 'skip'; const base=x.symbol.slice(0,-4);
-  if(STABLES.has(base)||/(DOWN|BEAR|BULL)$/.test(base)||(base.endsWith('UP')&&base.length>2&&bases.has(base.slice(0,-2)))) return 'skip';
+  if(STABLES.has(base)||isStockToken(base)||/(DOWN|BEAR|BULL)$/.test(base)||(base.endsWith('UP')&&base.length>2&&bases.has(base.slice(0,-2)))) return 'skip';
+  const lp=+x.lastPrice; if(Math.abs(lp-1)<0.02&&+x.highPrice/+x.lowPrice-1<0.01) return 'skip'; // stablecoin-like
   if(+x.quoteVolume<MIN_QV||now-x.closeTime>3600e3||!(+x.lastPrice>0)) return 'ineligible';
   return 'ok';
 }
@@ -220,30 +228,44 @@ function metrics(u,now){
     const r1=(u.price/u.p[i1]-1)*100, r3=(u.price/u.p[i3]-1)*100, r5=i5>=0?(u.price/u.p[i5]-1)*100:r3;
     const base=Math.max(1,(u.qv24||0)/1440); const surge=clamp(((u.qNow??0)-u.q[i1]+base)/base,0,20);
     const w=0.5*r1+0.35*r3+0.15*r5;
-    const dir=(r1>0&&r3>0&&r5>=0)?'LONG':(r1<0&&r3<0&&r5<=0)?'SHORT':null;
+    const dir=(r1>0&&r3>0&&r5>=0)?'LONG':null; // spot cannot short -> long-only
+    let vs=0,vn=0; for(let k=u.t.length-1;k>0;k--){ const j=idxAt(u,u.t[k]-60e3); if(j<0) break; const rr=Math.log(u.p[k]/u.p[j]); vs+=rr*rr; vn++; k=j+1; }
+    const vol1m=vn>=5?Math.sqrt(vs/vn):null; // stdev of 1-min log returns over the stored history (~35 min)
     const score=Math.abs(w)*Math.sqrt(clamp(surge,0.5,4))*(dir?1:0.3);
     const signal=!!dir&&Math.abs(r1)>=TH.r1&&Math.abs(r3)>=TH.r3&&Math.abs(r5)<TH.r5max&&surge>=TH.surge&&score>=TH.score;
-    return {key:u.key,sym:u.sym,src:'BN',r1,r3,r5,surge,dir,score,signal};
+    return {key:u.key,sym:u.sym,src:'BN',r1,r3,r5,surge,dir,score,signal,vol1m};
   } else {
     if(!u.eligible||now-(u.lastUpd||0)>150e3) return null;
     const m5=u.pc?.m5??0, h1=u.pc?.h1??0; const dir=m5>0&&h1>0?'LONG':null; // DEX: long-only
     const score=dir?(0.5*m5+0.05*h1)*0.5:Math.abs(m5)*0.1;
-    return {key:u.key,sym:u.sym,src:'DEX',chain:u.chain,r1:null,r3:null,r5:m5,h1,surge:null,dir,score,signal:!!dir&&m5>=1.5&&m5<15};
+    return {key:u.key,sym:u.sym,src:'DEX',chain:u.chain,r1:null,r3:null,r5:m5,h1,surge:null,dir,score,signal:false};                       // DEX = watch-only (pump/rug risk), never traded
   }
 }
 // rank all entries -> sorted rows
 function rankUniverse(U,now){ const rows=[]; for(const u of U.values()){ if(u.eligible===false) continue; const m=metrics(u,now); if(m) rows.push(m); } rows.sort((a,b)=>b.score-a.score); return rows; }
 // which signals to enter this cycle
-function pickEntries(rows,S,now,lastPx){ const out=[]; let open=Object.keys(S.positions).length;
-  for(const m of rows){ if(!m.signal) continue; if(out.length>=MAX_NEW_PER_CYCLE||open>=MAX_OPEN) break;
-    if(S.positions[m.key]) continue; if(now-(S.lastExit[m.key]||0)<COOLDOWN) continue; const px=lastPx(m.key); if(!px) continue;
-    out.push([m,px]); open++; } return out; }
+// candidates that need a live order-book check (caller fetches bookTicker for these)
+function entryCandidates(rows,S,now,n=6){ return rows.filter(m=>m.signal&&m.src==='BN'&&m.dir==='LONG'&&!S.positions[m.key]&&now-(S.lastExit[m.key]||0)>=COOLDOWN).slice(0,n); }
+// daily loss guard: returns true if new entries are allowed today (Rome day); keeps S.day
+function dayGuard(S,eq,now){ const d=romeDay(now); if(!S.day||S.day.d!==d) S.day={d,startEq:eq,halted:false};
+  if(!S.day.halted&&eq<S.day.startEq*(1-DAILY_STOP)) S.day.halted=true; return !S.day.halted; }
+// book: Map key -> {bid,ask}. Returns [[m,fillPx,info]], and `rej` collects reasons.
+function pickEntries(rows,S,now,lastPx,book,rej=[]){ const out=[]; let open=Object.keys(S.positions).length;
+  for(const m of entryCandidates(rows,S,now,50)){ if(out.length>=MAX_NEW_PER_CYCLE||open>=MAX_OPEN) break;
+    const b=book&&book.get(m.key); if(!b||!(b.bid>0)||!(b.ask>=b.bid)){ rej.push([m.sym,'no book']); continue; }
+    const mid=(b.bid+b.ask)/2, spreadBp=(b.ask-b.bid)/mid*1e4; if(spreadBp>MAX_SPREAD_BP){ rej.push([m.sym,`spread ${spreadBp.toFixed(1)}bp`]); continue; }
+    if(!m.vol1m){ rej.push([m.sym,'no vol estimate']); continue; }
+    out.push([m,b.ask*(1+SLIP),{bid:b.bid,ask:b.ask,mid,spreadBp}]); open++; } return out; }
 function equityOf(S,lastPx){ let e=S.cash; for(const p of Object.values(S.positions)) e+=posValue(p,lastPx(p.key)??p.entry); return e; }
 // open: mutates S, returns position or null
-function applyOpen(S,m,price,eq,now,fmt){ const notional=Math.min(eq*SIZE,S.cash/(1+FEE)); if(notional<0.5) return null;
-  const qty=notional/price; S.cash-=notional*(1+FEE); const L=m.dir==='LONG';
-  const p={key:m.key,sym:m.sym,src:m.src,side:m.dir,entry:price,qty,notional,feeIn:notional*FEE,stop:price*(L?1-SL:1+SL),tp:price*(L?1+TP:1-TP),peak:price,trailed:false,t:now,
-    why:m.src==='DEX'?`DEX 5m ${fmt(m.r5)} 1h ${fmt(m.h1)}`:`1m ${fmt(m.r1)} 3m ${fmt(m.r3)} 5m ${fmt(m.r5)} vol×${m.surge.toFixed(1)}`};
+// price = simulated fill (ask + slippage); info = {mid,spreadBp}. LONG only. Size: ~RISK of equity lost at the stop (incl. fees).
+function applyOpen(S,m,price,eq,now,fmt,info={}){ if(m.dir!=='LONG') return null;
+  const d=clamp(2.5*(m.vol1m||0.004)*Math.sqrt(15),SL_MIN,SL_MAX);           // stop distance from ~15-min volatility
+  let notional=Math.min(RISK*eq/(d+2*FEE+2*SLIP),MAX_POS_FRAC*eq,S.cash/(1+FEE));
+  if(notional<MIN_NOTIONAL){ if(MIN_NOTIONAL*(d+2*FEE+2*SLIP)<=0.02*eq&&S.cash>=MIN_NOTIONAL*(1+FEE)) notional=MIN_NOTIONAL; else return null; }
+  const qty=notional/price; S.cash-=notional*(1+FEE); const L=true;
+  const p={key:m.key,sym:m.sym,src:m.src,side:'LONG',entry:price,qty,notional,feeIn:notional*FEE,stop:price*(1-d),tp:price*(1+TP_R*d),slPct:d,spreadBp:info.spreadBp??null,mid:info.mid??null,peak:price,trailed:false,t:now,
+    why:`1m ${fmt(m.r1)} 3m ${fmt(m.r3)} 5m ${fmt(m.r5)} vol×${m.surge.toFixed(1)} · SL ${(d*100).toFixed(2)}% · spread ${(info.spreadBp??0).toFixed(1)}bp`};
   S.positions[m.key]=p; S.lastTraded=m.key; return p; }
 // exit check: updates trailing; returns {reason, trailArmed} (reason null = keep)
 function exitCheck(p,px,now){ const L=p.side==='LONG'; let trailArmed=false;
@@ -256,7 +278,11 @@ function exitCheck(p,px,now){ const L=p.side==='LONG'; let trailArmed=false;
   else if(now-p.t>TIME_STOP) reason='TIME STOP';
   return {reason,trailArmed}; }
 // close: mutates S, returns trade record
-function applyClose(S,key,px,reason,now){ const p=S.positions[key]; if(!p) return null;
+// px = last trade price; simulated fill = bid (≈ last − half the entry spread) − slippage for LONG; ask + slippage for legacy SHORT
+function exitFill(p,px){ const h=(p.spreadBp??2)/2/1e4; return p.side==='LONG'?px*(1-h-SLIP):px*(1+h+SLIP); }
+// positions not allowed under the honest rules (shorts, DEX, stocks, stables) -> caller closes them
+function disallowedPositions(S){ return Object.values(S.positions).filter(p=>p.side!=='LONG'||p.src!=='BN'||STABLES.has(p.sym)||isStockToken(p.sym)).map(p=>p.key); }
+function applyClose(S,key,px,reason,now){ const p=S.positions[key]; if(!p) return null; px=exitFill(p,px);
   const val=posValue(p,px), feeOut=p.qty*px*FEE, proceeds=val-feeOut, pnl=proceeds-p.notional*(1+FEE);
   S.cash+=proceeds; delete S.positions[key]; S.lastExit[key]=now; S.lastTraded=key;
   const pct=(p.side==='LONG'?px/p.entry-1:1-px/p.entry)*100;
@@ -326,7 +352,7 @@ async function loadUniverse(reseedAll=false){
       Object.assign(u,{price:+x.lastPrice,open24:+x.openPrice,qv24:+x.quoteVolume,qNow:+x.quoteVolume,eligible:true,lastUpd:now});
     }
     const bn=[...U.values()].filter(u=>u.src==='BN'&&u.eligible);
-    log(`UNIVERSE Binance spot: ${bn.length} USDT pairs ≥ $1M 24h vol (stablecoin/leveraged excluded) ${added.length?'· +'+added.length+' new':''}`,'c');
+    log(`UNIVERSE Binance spot: ${bn.length} USDT pairs ≥ $${MIN_QV/1e6}M 24h vol (stables/stocks/leveraged excluded) ${added.length?'· +'+added.length+' new':''}`,'c');
     const toSeed=reseedAll?bn:added; if(reseedAll) bn.forEach(u=>{u.t=[];u.p=[];u.q=[];u.lastSample=0;});
     if(toSeed.length){ const t0=Date.now(); await pool(toSeed.sort((a,b)=>b.qv24-a.qv24),8,seed); log(`SEED 1m history for ${toSeed.filter(u=>u.seeded).length}/${toSeed.length} pairs in ${((Date.now()-t0)/1000).toFixed(1)}s — scanner armed`,'c'); }
   }catch(e){ log(`UNIVERSE load failed: ${e.message} — retry 20s`,'r'); setTimeout(()=>loadUniverse(reseedAll),20000); }
@@ -368,36 +394,46 @@ async function refreshDex(){
     if(!u){ u={key,sym:p.baseToken.symbol,src:'DEX',t:[],p:[],q:[],lastSample:0}; U.set(key,u); }
     Object.assign(u,dexFields(p,now)); const liq=u.liq;
     u.lastSample=0; record(u,px,null,now);
-    if(isNew&&!firstDex) log(`NEW TRENDING ${esc(u.sym)} (${u.chain}) liq ${fmtBig(liq)} ${u.eligible?'· TRADABLE':'· watch only'}`,'c');
+    if(isNew&&!firstDex) log(`NEW TRENDING ${esc(u.sym)} (${u.chain}) liq ${fmtBig(liq)} · watch only`,'c');
     if(key in S.positions) checkExit(key);
     list.push(u); }
   if(list.length){ trendKeys=list.sort((a,b)=>b.vol24-a.vol24).map(u=>u.key);
-    if(firstDex) log(`DexScreener: ${tokens.size} trending tokens → ${list.length} pairs · ${list.filter(u=>u.eligible).length} tradable (liq ≥ $100K, age ≥ 24h)`,'c');
+    if(firstDex) log(`DexScreener: ${tokens.size} trending tokens → ${list.length} pairs · ${list.filter(u=>u.eligible).length} liq ≥ $100K (watch-only, never traded)`,'c');
     firstDex=false; dexBackoff=DEX_MS; renderTrending(); }
   else { dexBackoff=Math.min(180e3,dexBackoff*1.5); log(`DexScreener empty — retry ${Math.round(dexBackoff/1000)}s`,'o'); }
-  setT('trendInfo',`UPD ${tRome().slice(0,5)} · ${list.filter(u=>u.eligible).length} TRADABLE`);
+  setT('trendInfo',`UPD ${tRome().slice(0,5)} · WATCH-ONLY`);
   dexTimer=setTimeout(refreshDex,dexBackoff);
 }
 function riskFlags(u){ const f=[]; if(u.liq<50000) f.push(['LOW LIQ','bad']); else if(u.liq<DEX_MIN_LIQ) f.push(['LIQ<100K','warn']);
   if(u.ageH!=null&&u.ageH<24) f.push([u.ageH<1?'<1H OLD':Math.floor(u.ageH)+'H OLD','warn']);
-  if(Math.abs(u.pc?.m5||0)>15) f.push(['VOLATILE','warn']); f.push(u.eligible?['TRADABLE','ok']:['WATCH','bad']); return f; }
+  if(Math.abs(u.pc?.m5||0)>15) f.push(['VOLATILE','warn']); f.push(u.eligible?['LIQ OK · WATCH','warn']:['WATCH','bad']); return f; }
 function renderTrending(){ const el=$('trendBody'); if(!el) return; el.innerHTML=trendKeys.slice(0,TREND_MAX).map(k=>{ const u=U.get(k); return u?tplTrend(u,riskFlags(u)):''; }).join(''); }
 
 // ---------- scanner ----------
-function rank(){
+let rankBusy=false;
+async function fetchBook(keys){ const m=new Map(); if(!keys.length) return m;
+  try{ const d=await binanceGet(`/api/v3/ticker/bookTicker?symbols=${encodeURIComponent(JSON.stringify(keys))}`,8000); for(const x of d) m.set(x.symbol,{bid:+x.bidPrice,ask:+x.askPrice}); }
+  catch(e){ log(`bookTicker failed: ${esc(e.message)} — no entries this cycle`,'o'); } return m; }
+async function rank(){ if(rankBusy) return; rankBusy=true; try{ await rankInner(); }catch(e){ log('rank error: '+esc(e.message),'r'); } finally{ rankBusy=false; } }
+async function rankInner(){
   const now=Date.now(); setStep(0,1200);
   const rows=rankUniverse(U,now); SCAN=rows; lastRankAt=now;
   const sig=rows.filter(r=>r.signal);
   const bnN=[...U.values()].filter(u=>u.src==='BN'&&u.eligible).length, dexN=[...U.values()].filter(u=>u.src==='DEX'&&u.eligible).length;
   setT('chipScan',`${bnN+dexN} PAIRS`); setT('scanInfo',`${rows.length} RANKED · ${sig.length} SIGNALS · ${tRome().slice(0,8)}`);
   if(rows[0]){ const t=rows[0]; log(`SCAN ${rows.length} pairs · top ${t.sym}${t.src==='DEX'?'·DEX':''} score ${t.score.toFixed(2)} ${t.dir||'—'} 1m ${fmtPct(t.r1)} 5m ${fmtPct(t.r5)}${t.surge!=null?' vol×'+t.surge.toFixed(1):''} · ${sig.length} signals`,'d'); }
-  for(const [m,px] of pickEntries(rows,S,now,lastPx)) openPos(m,px);
+  const wasHalted=S.day?.halted; const allowed=dayGuard(S,equity(),now);
+  if(!allowed&&!wasHalted) log(`RISK daily stop: equity ${fmtEur(equity())} < −${DAILY_STOP*100}% today — no new entries until tomorrow`,'o');
+  const cands=allowed&&Object.keys(S.positions).length<MAX_OPEN?entryCandidates(rows,S,now,6):[];
+  if(cands.length){ const book=await fetchBook(cands.map(m=>m.key)); const rej=[];
+    for(const [m,px,info] of pickEntries(rows,S,Date.now(),lastPx,book,rej)) openPos(m,px,info);
+    if(rej.length) log('SKIP '+rej.map(([a,r])=>`${esc(a)}: ${r}`).join(' · '),'d'); }
   renderScanner(); renderPrices(); updateGlobeNodes();
 }
 
 // ---------- paper engine ----------
-function openPos(m,price){
-  const p=applyOpen(S,m,price,equity(),Date.now(),fmtPct); if(!p) return; const L=p.side==='LONG', notional=p.notional;
+function openPos(m,price,info){
+  const p=applyOpen(S,m,price,equity(),Date.now(),fmtPct,info); if(!p){ log(`SKIP ${m.sym}: size below ${MIN_NOTIONAL} USDT minimum or no cash`,'d'); return; } const L=p.side==='LONG', notional=p.notional;
   setStep(1,1500); setTimeout(()=>setStep(2,2500),700);
   log(`SIGNAL ${m.sym}${m.src==='DEX'?' [DEX HIGH RISK]':''} ${m.dir} score ${m.score.toFixed(2)} · ${p.why}`,'y');
   log(`PAPER ${L?'BUY/LONG':'SELL/SHORT'} ${m.sym} @ ${fmtPx(price)} size ${fmtEur(notional)} SL ${fmtPx(p.stop)} TP ${fmtPx(p.tp)}`,L?'g':'o');
@@ -412,6 +448,10 @@ function closePos(key,px,reason){
   setT('oExec','CLOSE '+p.sym); setT('oExec2',tRome()); flash('o-exec');
   save(); render();
 }
+async function purgeDisallowed(){ for(const k of disallowedPositions(S)){ const p=S.positions[k]; let px=lastPx(k);
+    if(!px&&p.src==='BN'){ try{ px=+(await binanceGet(`/api/v3/ticker/price?symbol=${k}`,8000)).price; }catch{} } if(!px) px=p.entry;
+    log(`RULE v1.1: closing ${p.side} ${esc(p.sym)} (not allowed: shorts/DEX/stocks)`,'o'); closePos(k,px,'RULE CHANGE v1.1'); }
+  for(const p of Object.values(S.positions)) if(p.src==='BN'&&!U.has(p.key)) U.set(p.key,{key:p.key,sym:p.sym,src:'BN',t:[],p:[],q:[],lastSample:0,eligible:false}); }
 function checkExit(key){
   const p=S.positions[key], px=lastPx(key); if(!p||!px) return; const {reason,trailArmed}=exitCheck(p,px,Date.now());
   if(trailArmed) log(`TRAIL armed ${p.sym} ${p.side} stop → ${fmtPx(p.stop)}`,'c');
@@ -552,13 +592,13 @@ document.addEventListener('visibilitychange',()=>{ if(document.hidden){ hiddenAt
 window.addEventListener('online',()=>{ log('Network online','c'); connectWS(); });
 async function boot(){
   log(`BOOT // MEMECOIN GROK HUD — PAPER ONLY (50 €), no real orders, no keys`,'c');
-  log(`STRATEGY momentum all-market: rank every ${RANK_MS/1000}s on 1m/3m/5m returns + volume surge · LONG & SHORT · size ${SIZE*100}% · max ${MAX_OPEN} · SL ${SL*100}% TP ${TP*100}% trail ${TRAIL*100}% after +${TRAIL_ON*100}% · time-stop ${TIME_STOP/60e3}m`,'d');
+  log(`STRATEGY v1.1 honest: momentum 1m/3m/5m + volume surge · LONG only (spot) · DEX watch-only · no stocks/stables · vol ≥ $${MIN_QV/1e6}M · spread ≤ ${MAX_SPREAD_BP}bp · fill bid/ask +${SLIP*100}% · risk ${RISK*100}%/trade (vol stop ${SL_MIN*100}-${SL_MAX*100}%, TP ${TP_R}R) · max ${MAX_OPEN} · daily stop −${DAILY_STOP*100}% · time-stop ${TIME_STOP/60e3}m`,'d');
   if(S.trades.length||Object.keys(S.positions).length) log(`RESTORED: ${S.trades.length} trades, ${Object.keys(S.positions).length} open, equity ${fmtEur(equity())}`,'c');
   if(S.lastTraded) selKey=S.lastTraded; const op=Object.keys(S.positions); if(op.length) selKey=op.at(-1);
   initCharts(); initGlobe(); loadCurve(); clock(); renderFeeds(); render();
   setInterval(clock,1000); setInterval(render,1000); setInterval(sampleEquity,10000);
   connectWS(); refreshDex();
-  await loadUniverse(); if(!U.has(selKey)) selKey='BTCUSDT'; loadChart(); sampleEquity();
+  await loadUniverse(); await purgeDisallowed(); if(!U.has(selKey)) selKey='BTCUSDT'; loadChart(); sampleEquity();
   rank(); setInterval(rank,RANK_MS); setInterval(()=>loadUniverse(false),UNIVERSE_MS);
 }
 
