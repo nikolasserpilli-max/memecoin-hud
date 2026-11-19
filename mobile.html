@@ -168,23 +168,103 @@ footer{color:var(--dim);font-size:10px;text-transform:none;line-height:1.5;paddi
   <div id="globe"><div class="micro" style="left:10px;top:8px">NODE:ROMA-01<br>41.9028N 12.4964E</div><div class="micro" style="right:10px;bottom:8px;text-align:right" id="microR">MESH<br>ARCS 0</div></div>
 </section>
 
-<footer>Simulazione di paper trading su dati pubblici reali (Binance, DexScreener). Nessun wallet, nessuna chiave, nessun ordine reale. Non è consulenza finanziaria.<br>Conto simulato in EUR, prezzi di mercato in USD, cambio ignorato.<br>Strategia: momentum su tutto il mercato Binance USDT (≥ $1M vol.) + memecoin DexScreener (liq. ≥ $100K, età ≥ 24h, solo long) · rank ogni 12s su rendimenti 1m/3m/5m e volume · LONG e SHORT · size 20% · max 4 · SL −1,2% · TP +2,5% · trailing · time-stop 18m · fee 0,1%. Tocca un simbolo per vederne il grafico. Il trading simulato gira solo con la pagina aperta; apri una sola pagina alla volta.</footer>
+<footer>Simulazione di paper trading su dati pubblici reali (Binance, DexScreener). Nessun wallet, nessuna chiave, nessun ordine reale. Non è consulenza finanziaria.<br>Conto simulato in EUR, prezzi di mercato in USD, cambio ignorato.<br>Strategia: momentum su tutto il mercato Binance USDT (≥ $1M vol.) + memecoin DexScreener (liq. ≥ $100K, età ≥ 24h, solo long) · rank ogni 12s su rendimenti 1m/3m/5m e volume · LONG e SHORT · size 20% · max 4 · SL −1,2% · TP +2,5% · trailing · time-stop 15m · fee 0,1%. Tocca un simbolo per vederne il grafico. Il trading simulato gira solo con la pagina aperta; apri una sola pagina alla volta.</footer>
 
 <script type="module">
 import * as THREE from 'https://unpkg.com/three@0.160.0/build/three.module.js';
 const TERM_MAX=30, TREND_MAX=15, SCAN_MAX=10, PRICE_MOVERS=8, GLOBE_LITE=true, CLOCK_SUFFIX='', CHART_EXTRA={handleScroll:false,handleScale:false};
 const CLOCK_UTC=n=>'ROMA · UTC '+n.toISOString().slice(11,16);
-// ======================= SHARED ENGINE (desktop + mobile) =======================
+// ======================= SHARED STRATEGY CORE (browser pages + Node bot) =======================
+// Pure logic, no DOM / no I/O. Inlined into the HTML pages by src/build.py and loaded by bot/bot.mjs.
 const REST_HOSTS=['https://data-api.binance.vision','https://api.binance.com'];
 const WS_HOSTS=['wss://data-stream.binance.vision','wss://stream.binance.com:9443'];
 const START=50, SIZE=0.20, MAX_OPEN=4, FEE=0.001;
-const SL=0.012, TP=0.025, TRAIL_ON=0.008, TRAIL=0.006, TIME_STOP=18*60e3, COOLDOWN=10*60e3, MAX_NEW_PER_CYCLE=2;
+const SL=0.012, TP=0.025, TRAIL_ON=0.008, TRAIL=0.006, TIME_STOP=15*60e3, COOLDOWN=10*60e3, MAX_NEW_PER_CYCLE=2;
 const MIN_QV=1e6, RANK_MS=12e3, SAMPLE_MS=5e3, HIST_MS=35*60e3, DEX_MS=40e3, UNIVERSE_MS=10*60e3;
 const DEX_MIN_LIQ=100000, DEX_MIN_AGE_H=24;
-// entry thresholds (Binance): % moves
 const TH={r1:0.08, r3:0.30, r5max:6, surge:0.7, score:0.25};
-const LS_KEY='memecoinGrokHud.v1', STATE_V=3;
 const STABLES=new Set(['USDC','FDUSD','TUSD','DAI','BUSD','USDP','USDE','PYUSD','EUR','EURI','AEUR','USD1','BFUSD','RLUSD','XUSD','GBP','TRY','BRL','UST','USTC','USDS','USDD','FRAX','LUSD','GUSD','SUSD','WBTC','WBETH','BETH','BNSOL','ZUSD','IDRT','BIDR','UAH','NGN','RUB','ARS','ZAR','PLN','RON','JPY','MXN','COP','CZK']);
+const clamp=(v,a,b)=>Math.max(a,Math.min(b,v));
+
+function idxAt(u,target){ let lo=0,hi=u.t.length-1,ans=-1; while(lo<=hi){ const m=(lo+hi)>>1; if(u.t[m]<=target){ ans=m; lo=m+1; } else hi=m-1; } return ans; }
+function record(u,price,q,now){ if(!(price>0)) return; u.price=price; if(q!=null) u.qNow=q; u.lastUpd=now;
+  if(now-u.lastSample>=SAMPLE_MS){ u.t.push(now); u.p.push(price); u.q.push(u.qNow??0); u.lastSample=now;
+    while(u.t.length&&u.t[0]<now-HIST_MS){ u.t.shift(); u.p.shift(); u.q.shift(); } } }
+function posValue(p,px){ return p.side==='LONG'? p.qty*px : Math.max(0,p.qty*(2*p.entry-px)); }
+
+// universe filter for one Binance 24hr ticker row; bases = Set of all USDT base assets. Returns 'skip' | 'ineligible' | 'ok'
+function universeCheck(x,bases,now){
+  if(!x.symbol.endsWith('USDT')) return 'skip'; const base=x.symbol.slice(0,-4);
+  if(STABLES.has(base)||/(DOWN|BEAR|BULL)$/.test(base)||(base.endsWith('UP')&&base.length>2&&bases.has(base.slice(0,-2)))) return 'skip';
+  if(+x.quoteVolume<MIN_QV||now-x.closeTime>3600e3||!(+x.lastPrice>0)) return 'ineligible';
+  return 'ok';
+}
+// seed history from 1m klines (last row = in-progress candle)
+function seedFromKlines(u,d){
+  if(!Array.isArray(d)||d.length<3) return false;
+  const base=(u.qv24||0)/1440; const live=d.at(-1); let cum=(u.qNow||0)-(+live[7]);
+  const closed=d.slice(0,-1); const t=[],p=[],q=[];
+  for(let i=closed.length-1;i>=0;i--){ const k=closed[i]; t.unshift(k[6]+1); p.unshift(+k[4]); q.unshift(cum); cum-=(+k[7]-base); }
+  const firstLive=u.t.length?u.t[0]:Infinity; const keep=t.findIndex(x=>x>=firstLive); const n=keep<0?t.length:keep;
+  u.t=[...t.slice(0,n),...u.t]; u.p=[...p.slice(0,n),...u.p]; u.q=[...q.slice(0,n),...u.q]; u.seeded=true; return true;
+}
+// DexScreener pair -> fields for universe entry
+function dexFields(p,now){ const ageH=p.pairCreatedAt?(now-p.pairCreatedAt)/3.6e6:null, liq=p.liquidity?.usd||0;
+  return {chain:p.chainId,addr:p.baseToken.address,name:p.baseToken.name,url:p.url,liq,ageH,vol24:p.volume?.h24||0,pc:p.priceChange||{},eligible:liq>=DEX_MIN_LIQ&&ageH!=null&&ageH>=DEX_MIN_AGE_H}; }
+
+function metrics(u,now){
+  if(u.src==='BN'){
+    if(!(u.price>0)||u.t.length<2) return null;
+    const i1=idxAt(u,now-60e3), i3=idxAt(u,now-180e3), i5=idxAt(u,now-300e3); if(i1<0||i3<0) return null;
+    if(now-u.t[i3]>10*60e3) return null;
+    const r1=(u.price/u.p[i1]-1)*100, r3=(u.price/u.p[i3]-1)*100, r5=i5>=0?(u.price/u.p[i5]-1)*100:r3;
+    const base=Math.max(1,(u.qv24||0)/1440); const surge=clamp(((u.qNow??0)-u.q[i1]+base)/base,0,20);
+    const w=0.5*r1+0.35*r3+0.15*r5;
+    const dir=(r1>0&&r3>0&&r5>=0)?'LONG':(r1<0&&r3<0&&r5<=0)?'SHORT':null;
+    const score=Math.abs(w)*Math.sqrt(clamp(surge,0.5,4))*(dir?1:0.3);
+    const signal=!!dir&&Math.abs(r1)>=TH.r1&&Math.abs(r3)>=TH.r3&&Math.abs(r5)<TH.r5max&&surge>=TH.surge&&score>=TH.score;
+    return {key:u.key,sym:u.sym,src:'BN',r1,r3,r5,surge,dir,score,signal};
+  } else {
+    if(!u.eligible||now-(u.lastUpd||0)>150e3) return null;
+    const m5=u.pc?.m5??0, h1=u.pc?.h1??0; const dir=m5>0&&h1>0?'LONG':null; // DEX: long-only
+    const score=dir?(0.5*m5+0.05*h1)*0.5:Math.abs(m5)*0.1;
+    return {key:u.key,sym:u.sym,src:'DEX',chain:u.chain,r1:null,r3:null,r5:m5,h1,surge:null,dir,score,signal:!!dir&&m5>=1.5&&m5<15};
+  }
+}
+// rank all entries -> sorted rows
+function rankUniverse(U,now){ const rows=[]; for(const u of U.values()){ if(u.eligible===false) continue; const m=metrics(u,now); if(m) rows.push(m); } rows.sort((a,b)=>b.score-a.score); return rows; }
+// which signals to enter this cycle
+function pickEntries(rows,S,now,lastPx){ const out=[]; let open=Object.keys(S.positions).length;
+  for(const m of rows){ if(!m.signal) continue; if(out.length>=MAX_NEW_PER_CYCLE||open>=MAX_OPEN) break;
+    if(S.positions[m.key]) continue; if(now-(S.lastExit[m.key]||0)<COOLDOWN) continue; const px=lastPx(m.key); if(!px) continue;
+    out.push([m,px]); open++; } return out; }
+function equityOf(S,lastPx){ let e=S.cash; for(const p of Object.values(S.positions)) e+=posValue(p,lastPx(p.key)??p.entry); return e; }
+// open: mutates S, returns position or null
+function applyOpen(S,m,price,eq,now,fmt){ const notional=Math.min(eq*SIZE,S.cash/(1+FEE)); if(notional<0.5) return null;
+  const qty=notional/price; S.cash-=notional*(1+FEE); const L=m.dir==='LONG';
+  const p={key:m.key,sym:m.sym,src:m.src,side:m.dir,entry:price,qty,notional,feeIn:notional*FEE,stop:price*(L?1-SL:1+SL),tp:price*(L?1+TP:1-TP),peak:price,trailed:false,t:now,
+    why:m.src==='DEX'?`DEX 5m ${fmt(m.r5)} 1h ${fmt(m.h1)}`:`1m ${fmt(m.r1)} 3m ${fmt(m.r3)} 5m ${fmt(m.r5)} vol×${m.surge.toFixed(1)}`};
+  S.positions[m.key]=p; S.lastTraded=m.key; return p; }
+// exit check: updates trailing; returns {reason, trailArmed} (reason null = keep)
+function exitCheck(p,px,now){ const L=p.side==='LONG'; let trailArmed=false;
+  p.peak=L?Math.max(p.peak,px):Math.min(p.peak,px);
+  const best=L?p.peak/p.entry-1:1-p.peak/p.entry;
+  if(best>=TRAIL_ON){ const ts=L?p.peak*(1-TRAIL):p.peak*(1+TRAIL); const ns=L?Math.max(p.stop,ts):Math.min(p.stop,ts); if(ns!==p.stop){ p.stop=ns; if(!p.trailed){ p.trailed=true; trailArmed=true; } } }
+  let reason=null;
+  if(L?px<=p.stop:px>=p.stop) reason=p.trailed?'TRAIL STOP':'STOP LOSS';
+  else if(L?px>=p.tp:px<=p.tp) reason='TAKE PROFIT';
+  else if(now-p.t>TIME_STOP) reason='TIME STOP';
+  return {reason,trailArmed}; }
+// close: mutates S, returns trade record
+function applyClose(S,key,px,reason,now){ const p=S.positions[key]; if(!p) return null;
+  const val=posValue(p,px), feeOut=p.qty*px*FEE, proceeds=val-feeOut, pnl=proceeds-p.notional*(1+FEE);
+  S.cash+=proceeds; delete S.positions[key]; S.lastExit[key]=now; S.lastTraded=key;
+  const pct=(p.side==='LONG'?px/p.entry-1:1-px/p.entry)*100;
+  const tr={key,sym:p.sym,src:p.src,side:p.side,entry:p.entry,exit:px,notional:p.notional,fees:(p.feeIn??p.notional*FEE)+feeOut,pnl,pct,reason,tIn:p.t,tOut:now};
+  S.trades.push(tr); if(S.trades.length>500) S.trades.shift(); return tr; }
+
+// ======================= SHARED ENGINE (desktop + mobile) =======================
+const LS_KEY='memecoinGrokHud.v1', STATE_V=3;
 
 // ---------- utils ----------
 const $=id=>document.getElementById(id);
@@ -199,7 +279,6 @@ const romeDate=new Intl.DateTimeFormat('it-IT',{timeZone:'Europe/Rome',day:'2-di
 const tRome=(t=Date.now())=>romeFmt.format(t);
 const ago=t=>!t?'—':(s=>s<60?s+'s':s<3600?Math.floor(s/60)+'m':Math.floor(s/3600)+'h')(Math.max(0,Math.round((Date.now()-t)/1000)));
 const esc=s=>String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
-const clamp=(v,a,b)=>Math.max(a,Math.min(b,v));
 async function fetchJson(url,ms=12000){ const c=new AbortController(); const to=setTimeout(()=>c.abort(),ms); const t0=performance.now();
   try{ const r=await fetch(url,{signal:c.signal,cache:'no-store'}); if(!r.ok) throw new Error('HTTP '+r.status); return {j:await r.json(),rtt:Math.round(performance.now()-t0)}; } finally{ clearTimeout(to); } }
 async function pool(items,n,fn){ let i=0; await Promise.all(Array.from({length:n},async()=>{ while(i<items.length){ const it=items[i++]; try{ await fn(it); }catch{} } })); }
@@ -226,26 +305,14 @@ const save=()=>{ try{ localStorage.setItem(LS_KEY,JSON.stringify(S)); }catch{} }
 // ---------- universe ----------
 const U=new Map(); // key -> entry
 let SCAN=[], lastRankAt=0;
-function idxAt(u,target){ let lo=0,hi=u.t.length-1,ans=-1; while(lo<=hi){ const m=(lo+hi)>>1; if(u.t[m]<=target){ ans=m; lo=m+1; } else hi=m-1; } return ans; }
-function record(u,price,q,now){ if(!(price>0)) return; u.price=price; if(q!=null) u.qNow=q; u.lastUpd=now;
-  if(now-u.lastSample>=SAMPLE_MS){ u.t.push(now); u.p.push(price); u.q.push(u.qNow??0); u.lastSample=now;
-    while(u.t.length&&u.t[0]<now-HIST_MS){ u.t.shift(); u.p.shift(); u.q.shift(); } } }
-function posValue(p,px){ return p.side==='LONG'? p.qty*px : Math.max(0,p.qty*(2*p.entry-px)); }
 function lastPx(key){ const u=U.get(key); return u&&u.price>0?u.price:null; }
-function equity(){ let e=S.cash; for(const p of Object.values(S.positions)) e+=posValue(p,lastPx(p.key)??p.entry); return e; }
+function equity(){ return equityOf(S,lastPx); }
 
 // ---------- Binance REST ----------
 let restHost=REST_HOSTS[0];
 async function binanceGet(path,ms){ let err; for(const h of [restHost,...REST_HOSTS.filter(x=>x!==restHost)]){ try{ const r=await fetchJson(h+path,ms); restHost=h; setFeed('BINANCE REST','UP',r.rtt); return r.j; }catch(e){ err=e; } } setFeed('BINANCE REST','DOWN'); throw err; }
-async function seed(u){ // last 12 closed 1m candles -> history (price + synthetic cumulative 24h quote volume)
-  const d=await binanceGet(`/api/v3/klines?symbol=${u.key}&interval=1m&limit=13`); if(!Array.isArray(d)||d.length<3) return;
-  const base=(u.qv24||0)/1440; const live=d.at(-1); let cum=(u.qNow||0)-(+live[7]);
-  const closed=d.slice(0,-1); const t=[],p=[],q=[];
-  for(let i=closed.length-1;i>=0;i--){ const k=closed[i]; t.unshift(k[6]+1); p.unshift(+k[4]); q.unshift(cum); cum-=(+k[7]-base); }
-  // merge with any live samples already captured
-  const firstLive=u.t.length?u.t[0]:Infinity; const keep=t.findIndex(x=>x>=firstLive); const n=keep<0?t.length:keep;
-  u.t=[...t.slice(0,n),...u.t]; u.p=[...p.slice(0,n),...u.p]; u.q=[...q.slice(0,n),...u.q]; u.seeded=true;
-}
+async function seed(u){ // last 12 closed 1m candles -> history
+  const d=await binanceGet(`/api/v3/klines?symbol=${u.key}&interval=1m&limit=13`); seedFromKlines(u,d); }
 let universeBusy=false;
 async function loadUniverse(reseedAll=false){
   if(universeBusy) return; universeBusy=true;
@@ -253,13 +320,10 @@ async function loadUniverse(reseedAll=false){
     const d=await binanceGet('/api/v3/ticker/24hr',25000); const now=Date.now();
     const bases=new Set(d.filter(x=>x.symbol.endsWith('USDT')).map(x=>x.symbol.slice(0,-4)));
     const added=[]; let skipped=0;
-    for(const x of d){ if(!x.symbol.endsWith('USDT')) continue; const base=x.symbol.slice(0,-4);
-      if(STABLES.has(base)||/(DOWN|BEAR|BULL)$/.test(base)||(base.endsWith('UP')&&base.length>2&&bases.has(base.slice(0,-2)))) { skipped++; continue; }
-      const qv=+x.quoteVolume, px=+x.lastPrice;
-      let u=U.get(x.symbol);
-      if(qv<MIN_QV||now-x.closeTime>3600e3||!(px>0)){ if(u) u.eligible=false; continue; }
-      if(!u){ u={key:x.symbol,sym:base,src:'BN',t:[],p:[],q:[],lastSample:0}; U.set(x.symbol,u); added.push(u); }
-      Object.assign(u,{price:px,open24:+x.openPrice,qv24:qv,qNow:qv,eligible:true,lastUpd:now});
+    for(const x of d){ const chk=universeCheck(x,bases,now); if(chk==='skip'){ skipped++; continue; }
+      let u=U.get(x.symbol); if(chk==='ineligible'){ if(u) u.eligible=false; continue; }
+      if(!u){ u={key:x.symbol,sym:x.symbol.slice(0,-4),src:'BN',t:[],p:[],q:[],lastSample:0}; U.set(x.symbol,u); added.push(u); }
+      Object.assign(u,{price:+x.lastPrice,open24:+x.openPrice,qv24:+x.quoteVolume,qNow:+x.quoteVolume,eligible:true,lastUpd:now});
     }
     const bn=[...U.values()].filter(u=>u.src==='BN'&&u.eligible);
     log(`UNIVERSE Binance spot: ${bn.length} USDT pairs ≥ $1M 24h vol (stablecoin/leveraged excluded) ${added.length?'· +'+added.length+' new':''}`,'c');
@@ -302,9 +366,7 @@ async function refreshDex(){
   const now=Date.now(); const list=[];
   for(const [k,p] of best){ const px=+p.priceUsd; if(!(px>0)) continue; const key='DEX:'+k; let u=U.get(key); const isNew=!u;
     if(!u){ u={key,sym:p.baseToken.symbol,src:'DEX',t:[],p:[],q:[],lastSample:0}; U.set(key,u); }
-    const ageH=p.pairCreatedAt?(now-p.pairCreatedAt)/3.6e6:null, liq=p.liquidity?.usd||0;
-    Object.assign(u,{chain:p.chainId,addr:p.baseToken.address,name:p.baseToken.name,url:p.url,liq,ageH,vol24:p.volume?.h24||0,pc:p.priceChange||{},
-      eligible:liq>=DEX_MIN_LIQ&&ageH!=null&&ageH>=DEX_MIN_AGE_H});
+    Object.assign(u,dexFields(p,now)); const liq=u.liq;
     u.lastSample=0; record(u,px,null,now);
     if(isNew&&!firstDex) log(`NEW TRENDING ${esc(u.sym)} (${u.chain}) liq ${fmtBig(liq)} ${u.eligible?'· TRADABLE':'· watch only'}`,'c');
     if(key in S.positions) checkExit(key);
@@ -322,50 +384,20 @@ function riskFlags(u){ const f=[]; if(u.liq<50000) f.push(['LOW LIQ','bad']); el
 function renderTrending(){ const el=$('trendBody'); if(!el) return; el.innerHTML=trendKeys.slice(0,TREND_MAX).map(k=>{ const u=U.get(k); return u?tplTrend(u,riskFlags(u)):''; }).join(''); }
 
 // ---------- scanner ----------
-function metrics(u,now){
-  if(u.src==='BN'){
-    if(!(u.price>0)||u.t.length<2) return null;
-    const i1=idxAt(u,now-60e3), i3=idxAt(u,now-180e3), i5=idxAt(u,now-300e3); if(i1<0||i3<0) return null;
-    if(now-u.t[i3]>10*60e3) return null;
-    const r1=(u.price/u.p[i1]-1)*100, r3=(u.price/u.p[i3]-1)*100, r5=i5>=0?(u.price/u.p[i5]-1)*100:r3;
-    const base=Math.max(1,(u.qv24||0)/1440); const surge=clamp(((u.qNow??0)-u.q[i1]+base)/base,0,20);
-    const w=0.5*r1+0.35*r3+0.15*r5;
-    const dir=(r1>0&&r3>0&&r5>=0)?'LONG':(r1<0&&r3<0&&r5<=0)?'SHORT':null;
-    const score=Math.abs(w)*Math.sqrt(clamp(surge,0.5,4))*(dir?1:0.3);
-    const signal=!!dir&&Math.abs(r1)>=TH.r1&&Math.abs(r3)>=TH.r3&&Math.abs(r5)<TH.r5max&&surge>=TH.surge&&score>=TH.score;
-    return {key:u.key,sym:u.sym,src:'BN',r1,r3,r5,surge,dir,score,signal};
-  } else {
-    if(!u.eligible||now-(u.lastUpd||0)>150e3) return null;
-    const m5=u.pc?.m5??0, h1=u.pc?.h1??0; const dir=m5>0&&h1>0?'LONG':null; // DEX: long-only (no realistic short on DEX memecoins)
-    const score=dir?(0.5*m5+0.05*h1)*0.5:Math.abs(m5)*0.1;
-    return {key:u.key,sym:u.sym,src:'DEX',chain:u.chain,r1:null,r3:null,r5:m5,h1,surge:null,dir,score,signal:!!dir&&m5>=1.5&&m5<15};
-  }
-}
 function rank(){
   const now=Date.now(); setStep(0,1200);
-  const rows=[]; for(const u of U.values()){ if(u.eligible===false) continue; const m=metrics(u,now); if(m) rows.push(m); }
-  rows.sort((a,b)=>b.score-a.score); SCAN=rows; lastRankAt=now;
+  const rows=rankUniverse(U,now); SCAN=rows; lastRankAt=now;
   const sig=rows.filter(r=>r.signal);
   const bnN=[...U.values()].filter(u=>u.src==='BN'&&u.eligible).length, dexN=[...U.values()].filter(u=>u.src==='DEX'&&u.eligible).length;
   setT('chipScan',`${bnN+dexN} PAIRS`); setT('scanInfo',`${rows.length} RANKED · ${sig.length} SIGNALS · ${tRome().slice(0,8)}`);
   if(rows[0]){ const t=rows[0]; log(`SCAN ${rows.length} pairs · top ${t.sym}${t.src==='DEX'?'·DEX':''} score ${t.score.toFixed(2)} ${t.dir||'—'} 1m ${fmtPct(t.r1)} 5m ${fmtPct(t.r5)}${t.surge!=null?' vol×'+t.surge.toFixed(1):''} · ${sig.length} signals`,'d'); }
-  let opened=0;
-  for(const m of sig){
-    if(opened>=MAX_NEW_PER_CYCLE||Object.keys(S.positions).length>=MAX_OPEN) break;
-    if(S.positions[m.key]) continue; if(now-(S.lastExit[m.key]||0)<COOLDOWN) continue;
-    const px=lastPx(m.key); if(!px) continue;
-    openPos(m,px); opened++;
-  }
+  for(const [m,px] of pickEntries(rows,S,now,lastPx)) openPos(m,px);
   renderScanner(); renderPrices(); updateGlobeNodes();
 }
 
 // ---------- paper engine ----------
 function openPos(m,price){
-  const eq=equity(); const notional=Math.min(eq*SIZE,S.cash/(1+FEE)); if(notional<0.5) return;
-  const qty=notional/price; S.cash-=notional*(1+FEE); const L=m.dir==='LONG';
-  const p={key:m.key,sym:m.sym,src:m.src,side:m.dir,entry:price,qty,notional,stop:price*(L?1-SL:1+SL),tp:price*(L?1+TP:1-TP),peak:price,trailed:false,t:Date.now(),
-    why:m.src==='DEX'?`DEX 5m ${fmtPct(m.r5)} 1h ${fmtPct(m.h1)}`:`1m ${fmtPct(m.r1)} 3m ${fmtPct(m.r3)} 5m ${fmtPct(m.r5)} vol×${m.surge.toFixed(1)}`};
-  S.positions[m.key]=p; S.lastTraded=m.key;
+  const p=applyOpen(S,m,price,equity(),Date.now(),fmtPct); if(!p) return; const L=p.side==='LONG', notional=p.notional;
   setStep(1,1500); setTimeout(()=>setStep(2,2500),700);
   log(`SIGNAL ${m.sym}${m.src==='DEX'?' [DEX HIGH RISK]':''} ${m.dir} score ${m.score.toFixed(2)} · ${p.why}`,'y');
   log(`PAPER ${L?'BUY/LONG':'SELL/SHORT'} ${m.sym} @ ${fmtPx(price)} size ${fmtEur(notional)} SL ${fmtPx(p.stop)} TP ${fmtPx(p.tp)}`,L?'g':'o');
@@ -374,24 +406,16 @@ function openPos(m,price){
   autoSelect(m.key); save(); render();
 }
 function closePos(key,px,reason){
-  const p=S.positions[key]; if(!p) return;
-  const val=posValue(p,px), fee=p.qty*px*FEE, proceeds=val-fee, pnl=proceeds-p.notional*(1+FEE);
-  S.cash+=proceeds; delete S.positions[key]; S.lastExit[key]=Date.now(); S.lastTraded=key;
-  const pct=(p.side==='LONG'?px/p.entry-1:1-px/p.entry)*100;
-  S.trades.push({key,sym:p.sym,src:p.src,side:p.side,entry:p.entry,exit:px,pnl,pct,reason,tIn:p.t,tOut:Date.now()}); if(S.trades.length>500) S.trades.shift();
+  const p=S.positions[key]; if(!p) return; const tr=applyClose(S,key,px,reason,Date.now()); const pnl=tr.pnl, pct=tr.pct;
   setStep(2,2500);
   log(`PAPER CLOSE ${p.side} ${p.sym} @ ${fmtPx(px)} [${reason}] P/L ${pnl>=0?'+':''}${fmtEur(pnl)} (${fmtPct(pct)}) · held ${ago(p.t)}`,pnl>=0?'g':'r');
   setT('oExec','CLOSE '+p.sym); setT('oExec2',tRome()); flash('o-exec');
   save(); render();
 }
 function checkExit(key){
-  const p=S.positions[key], px=lastPx(key); if(!p||!px) return; const L=p.side==='LONG';
-  p.peak=L?Math.max(p.peak,px):Math.min(p.peak,px);
-  const best=L?p.peak/p.entry-1:1-p.peak/p.entry;
-  if(best>=TRAIL_ON){ const ts=L?p.peak*(1-TRAIL):p.peak*(1+TRAIL); const ns=L?Math.max(p.stop,ts):Math.min(p.stop,ts); if(ns!==p.stop){ p.stop=ns; if(!p.trailed){ p.trailed=true; log(`TRAIL armed ${p.sym} ${p.side} stop → ${fmtPx(ns)}`,'c'); } } }
-  if(L?px<=p.stop:px>=p.stop) closePos(key,px,p.trailed?'TRAIL STOP':'STOP LOSS');
-  else if(L?px>=p.tp:px<=p.tp) closePos(key,px,'TAKE PROFIT');
-  else if(Date.now()-p.t>TIME_STOP) closePos(key,px,'TIME STOP');
+  const p=S.positions[key], px=lastPx(key); if(!p||!px) return; const {reason,trailArmed}=exitCheck(p,px,Date.now());
+  if(trailArmed) log(`TRAIL armed ${p.sym} ${p.side} stop → ${fmtPx(p.stop)}`,'c');
+  if(reason) closePos(key,px,reason);
 }
 setInterval(()=>{ for(const k of Object.keys(S.positions)) checkExit(k); },5000);
 
