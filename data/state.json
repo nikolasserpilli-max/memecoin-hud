@@ -1,0 +1,322 @@
+{
+  "updated_rome": "2026-11-20 08:25:15",
+  "updated_utc": "2026-11-20T07:25:15.026Z",
+  "updated_hhmm_rome": "08:25",
+  "start_equity": 50,
+  "mode": "PAPER (simulated, no real orders, no keys)",
+  "v1": {
+    "id": "v1",
+    "name": "v1 veloce",
+    "start_equity": 50,
+    "equity": 48.9656,
+    "cash": 48.9656,
+    "total_pnl": -1.0344,
+    "total_pnl_pct": -2.069,
+    "trades": 13,
+    "wins": 5,
+    "losses": 8,
+    "win_rate_pct": 38.5,
+    "fees_paid_total": 0.2689,
+    "max_drawdown_eur": 1.4693,
+    "max_drawdown_pct": 2.913,
+    "open_positions": [],
+    "recent_trades": [
+      {
+        "symbol": "YB",
+        "src": "BN",
+        "side": "LONG",
+        "entry": 0.0543,
+        "exit": 0.0536,
+        "notional": 10,
+        "fees": 0.0199,
+        "pnl": -0.1488,
+        "pct": -1.289,
+        "reason": "STOP LOSS",
+        "closed_rome": "2026-11-19 22:47:01"
+      },
+      {
+        "symbol": "RARE",
+        "src": "BN",
+        "side": "LONG",
+        "entry": 0.01332,
+        "exit": 0.01368,
+        "notional": 9.998,
+        "fees": 0.0203,
+        "pnl": 0.2499,
+        "pct": 2.703,
+        "reason": "TAKE PROFIT",
+        "closed_rome": "2026-11-19 22:47:43"
+      },
+      {
+        "symbol": "CBUCKS",
+        "src": "DEX",
+        "side": "LONG",
+        "entry": 0.003969,
+        "exit": 0.003965,
+        "notional": 10.003,
+        "fees": 0.02,
+        "pnl": -0.0301,
+        "pct": -0.101,
+        "reason": "TRAIL STOP",
+        "closed_rome": "2026-11-19 22:47:56"
+      },
+      {
+        "symbol": "TLM",
+        "src": "BN",
+        "side": "SHORT",
+        "entry": 0.000952,
+        "exit": 0.000949,
+        "notional": 9.9854,
+        "fees": 0.0199,
+        "pnl": 0.0115,
+        "pct": 0.315,
+        "reason": "TRAIL STOP",
+        "closed_rome": "2026-11-19 23:01:06"
+      },
+      {
+        "symbol": "IRENB",
+        "src": "BN",
+        "side": "LONG",
+        "entry": 14.27,
+        "exit": 14.46,
+        "notional": 10.001,
+        "fees": 0.0201,
+        "pnl": 0.113,
+        "pct": 1.331,
+        "reason": "TIME STOP",
+        "closed_rome": "2026-11-19 23:01:41"
+      },
+      {
+        "symbol": "ONE",
+        "src": "BN",
+        "side": "LONG",
+        "entry": 0.00116,
+        "exit": 0.001157,
+        "notional": 10.0486,
+        "fees": 0.0201,
+        "pnl": -0.0461,
+        "pct": -0.259,
+        "reason": "TIME STOP",
+        "closed_rome": "2026-11-19 23:02:46"
+      },
+      {
+        "symbol": "CFG",
+        "src": "BN",
+        "side": "SHORT",
+        "entry": 0.06,
+        "exit": 0.0603,
+        "notional": 10.0051,
+        "fees": 0.0201,
+        "pnl": -0.0701,
+        "pct": -0.5,
+        "reason": "TIME STOP",
+        "closed_rome": "2026-11-19 23:03:01"
+      },
+      {
+        "symbol": "RARE",
+        "src": "BN",
+        "side": "LONG",
+        "entry": 0.01384,
+        "exit": 0.01419,
+        "notional": 10.0283,
+        "fees": 0.0203,
+        "pnl": 0.2333,
+        "pct": 2.529,
+        "reason": "TAKE PROFIT",
+        "closed_rome": "2026-11-19 23:03:50"
+      },
+      {
+        "symbol": "DODO",
+        "src": "BN",
+        "side": "SHORT",
+        "entry": 0.03046,
+        "exit": 0.03046218,
+        "notional": 10.0254,
+        "fees": 0.0201,
+        "pnl": -0.0208,
+        "pct": -0.007,
+        "reason": "TRAIL STOP",
+        "closed_rome": "2026-11-19 23:06:34"
+      },
+      {
+        "symbol": "SOXLB",
+        "src": "BN",
+        "side": "LONG",
+        "entry": 45.01,
+        "exit": 44.912028,
+        "notional": 10.0199,
+        "fees": 0.02,
+        "pnl": -0.0418,
+        "pct": -0.218,
+        "reason": "RULE CHANGE v1.1",
+        "closed_rome": "2026-11-19 23:06:35"
+      },
+      {
+        "symbol": "YB",
+        "src": "BN",
+        "side": "SHORT",
+        "entry": 0.0525,
+        "exit": 0.05212084,
+        "notional": 10.0753,
+        "fees": 0.0201,
+        "pnl": 0.0527,
+        "pct": 0.722,
+        "reason": "RULE CHANGE v1.1",
+        "closed_rome": "2026-11-19 23:06:35"
+      },
+      {
+        "symbol": "SYRUP",
+        "src": "BN",
+        "side": "LONG",
+        "entry": 0.0959,
+        "exit": 0.09596160000000001,
+        "notional": 10.0164,
+        "fees": 0.02,
+        "pnl": -0.0136,
+        "pct": 0.064,
+        "reason": "TIME STOP",
+        "closed_rome": "2026-11-19 23:19:25"
+      },
+      {
+        "symbol": "MMT",
+        "src": "BN",
+        "side": "LONG",
+        "entry": 0.27518253,
+        "exit": 0.25087907193237596,
+        "notional": 14.6707,
+        "fees": 0.028,
+        "pnl": -1.3237,
+        "pct": -8.832,
+        "reason": "STOP LOSS",
+        "closed_rome": "2026-11-20 07:45:09"
+      }
+    ],
+    "equity_curve": [
+      {
+        "t": 1795124794,
+        "v": 49.9391
+      },
+      {
+        "t": 1795124861,
+        "v": 50.2158
+      },
+      {
+        "t": 1795125141,
+        "v": 50.0067
+      },
+      {
+        "t": 1795125441,
+        "v": 50.0798
+      },
+      {
+        "t": 1795125741,
+        "v": 50.1207
+      },
+      {
+        "t": 1795126015,
+        "v": 50.3242
+      },
+      {
+        "t": 1795126295,
+        "v": 50.2467
+      },
+      {
+        "t": 1795126761,
+        "v": 50.2518
+      },
+      {
+        "t": 1795156804,
+        "v": 50.2595
+      },
+      {
+        "t": 1795157104,
+        "v": 50.2595
+      },
+      {
+        "t": 1795157689,
+        "v": 48.9656
+      },
+      {
+        "t": 1795157989,
+        "v": 48.9656
+      },
+      {
+        "t": 1795158310,
+        "v": 48.9656
+      },
+      {
+        "t": 1795158610,
+        "v": 48.9656
+      },
+      {
+        "t": 1795158910,
+        "v": 48.9656
+      },
+      {
+        "t": 1795159210,
+        "v": 48.9656
+      },
+      {
+        "t": 1795159510,
+        "v": 48.9656
+      }
+    ],
+    "updated_rome": "2026-11-20 08:25:10",
+    "day_halted": false,
+    "rules": "v1.1 honest: long-only spot, DEX watch-only, vol ≥ $20M, spread ≤ 5bp, risk 1%/trade, max 2, daily −3%"
+  },
+  "v2": {
+    "id": "v2",
+    "name": "v2 lento",
+    "start_equity": 50,
+    "equity": 50,
+    "cash": 50,
+    "total_pnl": 0,
+    "total_pnl_pct": 0,
+    "trades": 0,
+    "fills": 0,
+    "wins": 0,
+    "losses": 0,
+    "win_rate_pct": null,
+    "fees_paid_total": 0,
+    "max_drawdown_eur": null,
+    "max_drawdown_pct": 0,
+    "open_positions": [],
+    "recent_trades": [],
+    "equity_curve": [
+      {
+        "t": 1795125956,
+        "v": 50
+      },
+      {
+        "t": 1795156745,
+        "v": 50
+      }
+    ],
+    "signals": [
+      {
+        "symbol": "BTCUSDT",
+        "close": 61986.73,
+        "sma70": 79119.402,
+        "trend_on": false,
+        "target_w": 0,
+        "action": "FLAT",
+        "eval_rome": "2026-11-20 07:39:04",
+        "candle_day_utc": "2026-11-19"
+      },
+      {
+        "symbol": "ETHUSDT",
+        "close": 1757.32,
+        "sma70": 2395.4266,
+        "trend_on": false,
+        "target_w": 0,
+        "action": "FLAT",
+        "eval_rome": "2026-11-20 07:39:04",
+        "candle_day_utc": "2026-11-19"
+      }
+    ],
+    "last_eval_candle_day_utc": "2026-11-19",
+    "updated_rome": "2026-11-20 08:11:46",
+    "rules": "V2A: BTC/ETH only when close > 70-day SMA, risk 1%/day vol, daily eval"
+  }
+}
